@@ -1,0 +1,833 @@
+% =====================================================================
+%  DeepKnight technical report, adapted from the final group-project report.
+%  Historical measurements refer to the July 2026 implementation.
+%  Compile: tectonic technical-report.tex (or pdflatex twice).
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{caption}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc}
+\usepackage[hidelinks]{hyperref}
+
+% ---- Kopf-/Fusszeile -------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small DeepKnight}
+\rhead{\small Technischer Bericht}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- Code-Listing-Stil ----------------------------------------------
+\definecolor{codegray}{rgb}{0.95,0.95,0.95}
+\definecolor{codekw}{rgb}{0.0,0.2,0.6}
+\definecolor{codecmt}{rgb}{0.30,0.55,0.30}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codegray},
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecmt}\itshape,
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray!40},
+  showstringspaces=false,
+  language=Python,
+  columns=fullflexible,
+  keepspaces=true,
+}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% Lange \texttt{}-Bezeichner (z.B. Funktionsnamen) brechen nicht um; diese
+% Feineinstellungen lassen TeX enge Zeilen leicht dehnen statt \"uber den Rand
+% laufen zu lassen -- vermeidet Overfull-\hbox ohne sichtbar lockere Absaetze.
+\setlength{\emergencystretch}{3em}
+\tolerance=1200
+
+% =====================================================================
+\begin{document}
+
+% ---- Titelseite ------------------------------------------------------
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{1.5cm}
+
+{\large\textsc{DeepKnight}}\\[1.5cm]
+
+\rule{\linewidth}{0.4pt}\\[0.4cm]
+{\normalsize Tablut-KI mit Bitboards, PVS und MCTS/RAVE}\\[0.4cm]
+\rule{\linewidth}{0.4pt}\\[2.5cm]
+
+{\Huge\bfseries Technischer Bericht}\\[0.8cm]
+{\Large Entwicklung einer spielstarken KI}\\[0.2cm]
+{\Large f\"ur das Spiel Tablut}\\[0.4cm]
+{\large\bfseries Architektur, Suchverfahren und Evaluation}\\[2.0cm]
+
+{\normalsize Portfolio-Ausgabe von Yousef Mousa}\\[0.5cm]
+{\small Basierend auf dem gemeinsamen TU-Berlin-Projekt mit}\\[0.2cm]
+{\small Batuhan Caniberk und Adham Ahmed Mostafa Mohamed Ibrahim}
+
+\vfill
+{\normalsize Repository: \href{https://github.com/Robertsvg/deepknight}{github.com/Robertsvg/deepknight}}\\[0.3cm]
+{\small Technische Ergebnisse der Projektfassung vom Juli 2026.}\\[0.2cm]
+{\small Aktuelle Regressionstests und Wartungs\"anderungen: siehe README.}
+\end{titlepage}
+
+% ---- Zusammenfassung / Abstract -------------------------------------
+\begin{abstract}
+\noindent
+Dieser Bericht dokumentiert die Entwicklung von \textbf{DeepKnight}, einer
+spielstarken KI f\"ur das asymmetrische Wikinger-Brettspiel \emph{Tablut}, \"uber
+vier Meilensteine hinweg.
+Der Ansatz ist bewusst \emph{symbolisch} -- Spielbaumsuche mit handgeschriebener
+Bewertungsfunktion, ohne maschinelles Lernen.
+Kern ist ein Alpha-Beta-Stack mit iterativer Tiefensuche, Transposition Table,
+Principal Variation Search sowie erweiterter Zugsortierung (Killer Moves und
+History-Heuristik), erg\"anzt um ein spielphasenabh\"angiges Zeitmanagement.
+Die Zustandsrepr\"asentation nutzt \textbf{Bitboards} (drei 81-Bit-Integer), was
+die Bewertung gegen\"uber der objektbasierten Fassung um rund das
+\textbf{72-Fache} beschleunigt.
+Im vierten Meilenstein kamen eine eigenst\"andige Anbindung an den offiziellen
+TU-Gameserver mit \emph{server-treuer} Schlaglogik (\textbf{0 Desyncs} \"uber
+$152\,000$ verifizierte Z\"uge), eine im Contest geh\"artete Wei\ss-Verteidigung
+(die \glqq K\"onig-Falle\grqq{}) sowie eine komplement\"are Monte-Carlo-Baumsuche
+mit RAVE-Erweiterung hinzu.
+Die finale Projektfassung ist durch \textbf{138 automatisierte Tests} abgesichert.
+In direkten Contests gegen eine andere Gruppe gewann DeepKnight nach der
+Eval-H\"artung in beiden Farbrollen.
+\end{abstract}
+
+% ---- Inhaltsverzeichnis ---------------------------------------------
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Einf\"uhrung}
+% =====================================================================
+Im Rahmen des Projekts \emph{Symbolische K\"unstliche Intelligenz} hat Gruppe~A
+\"uber vier Meilensteine hinweg eine spielstarke KI f\"ur das Wikinger-Brettspiel
+\textbf{Tablut} entwickelt.
+Es handelt sich bewusst um \emph{klassische, symbolische} KI ohne maschinelles
+Lernen: Spielbaumsuche mit einer handgeschriebenen Bewertungsfunktion.
+Die KI tr\"agt den Namen \textbf{DeepKnight} und ist vollst\"andig in Python~3
+implementiert.
+
+Der Bericht fasst den gesamten Projektverlauf zusammen und ist wie folgt
+gegliedert.
+Abschnitt~\ref{sec:tablut} beschreibt die Spielregeln.
+Abschnitt~\ref{sec:arch} erl\"autert die Zustandsrepr\"asentation und die
+Systemarchitektur.
+Abschnitt~\ref{sec:search} stellt die Suchverfahren dar, die \"uber die
+Meilensteine hinweg entstanden sind (Minimax, Alpha-Beta, Transposition Table,
+Principal Variation Search, erweiterte Zugsortierung, Spielphasen-Zeitmanagement).
+Abschnitt~\ref{sec:eval} dokumentiert die Entwicklung der Bewertungsfunktion.
+Abschnitt~\ref{sec:contest} beschreibt die im vierten Meilenstein neu
+entwickelte Contest-Anbindung an den offiziellen TU-Gameserver.
+Abschnitt~\ref{sec:mcts} behandelt die komplement\"are Technik
+Monte-Carlo-Baumsuche.
+Abschnitt~\ref{sec:results} fasst Benchmarks, Contests und Softwarequalit\"at
+zusammen, Abschnitt~\ref{sec:conclusion} schlie\ss t mit einem Fazit.
+
+\paragraph{Meilenstein\"ubersicht.}
+\begin{center}
+\begin{tabular}{clp{7.6cm}}
+\toprule
+\textbf{M} & \textbf{Thema} & \textbf{Kern} \\
+\midrule
+M1 & Dummy-KI      & Zuggenerator, Spielende-Erkennung, Random-Move \\
+M2 & Basis-KI      & Alpha-Beta, iterative Tiefensuche, erste Bewertungsfunktion \\
+M3 & Erweiterte KI & Transposition Table, PVS, Killer/History, Spielphasen \\
+M4 & Optimierte KI & Contest-Anbindung, verbesserte Bewertung, MCTS (komplement\"ar) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Entsprechend der Vorgabe wurde \textbf{kein Multithreading} eingesetzt; alle
+Verfahren laufen single-threaded, um im Contest faire und reproduzierbare
+Bedingungen zu gew\"ahrleisten.
+
+% =====================================================================
+\section{Das Spiel Tablut}\label{sec:tablut}
+% =====================================================================
+Tablut ist ein asymmetrisches Zwei-Parteien-Brettspiel auf einem
+$9\times 9$-Feld.
+Die beiden Parteien verfolgen unterschiedliche Ziele, was die KI-Entwicklung
+besonders reizvoll macht.
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Schwarz} (Angreifer) beginnt und stellt 16~Figuren.
+        Ziel: den wei\ss en K\"onig fangen.
+  \item \textbf{Wei\ss} (Verteidiger) stellt 8~Figuren plus den K\"onig.
+        Ziel: den K\"onig in eines der vier Eckfelder fl\"uchten.
+\end{itemize}
+
+\paragraph{Zug- und Schlagregeln.}
+\begin{itemize}[noitemsep]
+  \item Alle Figuren ziehen wie T\"urme im Schach: orthogonal, beliebig weit,
+        ohne \"uber Figuren zu springen.
+  \item Die vier Eckfelder und das zentrale Thronfeld d\"urfen nur vom K\"onig
+        betreten werden.
+        Der leere Thron darf \"ubersprungen werden; hat der K\"onig den Thron
+        verlassen, darf er nicht zur\"uckkehren.
+  \item \textbf{Schlagen} (kustodial): Eine gegnerische Figur wird geschlagen,
+        wenn sie orthogonal zwischen zwei feindlichen Figuren -- oder zwischen
+        einer feindlichen Figur und einem Eckfeld bzw.\ dem (leeren) Thron --
+        eingeklemmt wird.
+  \item \textbf{K\"onig schlagen}: je nach Position sind 2 Angreifer (frei),
+        3 Angreifer (neben dem Thron) oder 4 Angreifer (auf dem Thron) n\"otig.
+  \item \textbf{Sieg}: Wei\ss\ gewinnt, wenn der K\"onig ein Eckfeld erreicht;
+        Schwarz gewinnt, wenn der K\"onig geschlagen wird.
+  \item \textbf{Remis}: Stellungswiederholung, kein legaler Zug oder eine
+        festgelegte Zahl von Z\"ugen ohne Schlag.
+\end{itemize}
+
+Die asymmetrischen Ziele bedeuten, dass die Bewertungsfunktion beide Seiten
+unterschiedlich behandeln muss (Abschnitt~\ref{sec:eval}); die Suche selbst
+arbeitet daher nicht im Negamax-Schema, sondern behandelt Wei\ss\ als
+Maximizer und Schwarz als Minimizer.
+
+% =====================================================================
+\section{Zustandsrepr\"asentation und Architektur}\label{sec:arch}
+% =====================================================================
+Das Brett wird durch \textbf{Bitboards} dargestellt (\code{src/board.py}):
+Drei Ganzzahlen \code{attackers}, \code{defenders} und \code{king} kodieren je
+eine Figurenart, wobei Bit~$r\cdot 9 + c$ das Feld $(r,c)$ belegt.
+Zusammengeh\"orige abgeleitete Bitboards wie \code{occupied} sowie vorgerechnete
+Masken (\code{CORNERS\_BB}, \code{EDGE\_BB}, \code{THRONE\_BIT}) erlauben schnelle
+Mengenoperationen und Z\"ahlungen \"uber \code{bit\_count()} (Popcount auf
+C-Ebene).
+Erg\"anzend bietet \code{Board} feldweise Zugriffe (\code{get}, \code{set},
+\code{is\_empty}) f\"ur Code, der einzelne Felder betrachtet.
+
+\paragraph{Board als Hash-Schl\"ussel.}
+\code{Board} definiert \code{\_\_hash\_\_} und \code{\_\_eq\_\_} auf Basis der Felder
+\[
+(\text{attackers},\ \text{defenders},\ \text{king},\ \text{side\_to\_move},\ \text{king\_left\_throne}).
+\]
+Diese beschreiben eine Stellung kollisionsfrei, sodass Stellungen ohne
+zus\"atzliches Zobrist-Hashing als Dictionary-Schl\"ussel dienen k\"onnen -- das
+wird in der Transposition Table ausgenutzt (Abschnitt~\ref{sec:tt}).
+
+\paragraph{Module (Auswahl).}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Datei} & \textbf{Aufgabe} \\
+\midrule
+\code{board.py}                & Bitboard-Repr\"asentation, Hashing, Zugriffe \\
+\code{moves.py}, \code{rules.py} & Zuggenerierung, Schlag- und Endregeln \\
+\code{evaluation.py}           & Bewertungsfunktion, Spielphasen \\
+\code{alpha\_beta.py}, \code{pvs.py} & Suchkerne \\
+\code{transposition\_table.py} & Transposition Table \\
+\code{search\_state.py}        & Killer Moves + History \\
+\code{time\_manager.py}        & Zeitbudget je Spielphase \\
+\code{iterative\_deepening.py} & Rahmen der iterativen Tiefensuche \\
+\code{ai.py}                   & KI-Klassen (RandomAI \dots\ AdvancedAI) \\
+\code{gameserver.py}, \code{server\_rules.py} & Contest-Anbindung (M4) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Klassen- und Architektur\"uberblick.}
+Abbildung~\ref{fig:classes} zeigt die zentralen Klassen und ihr Zusammenspiel.
+Alle KI-Klassen teilen sich die Schnittstelle \code{choose\_move(board)}, sodass
+sie im Turnier, im Selfplay und in Tests austauschbar sind.
+Die produktive \code{AdvancedAI} orchestriert den Alpha-Beta-Stack (iterative
+Tiefensuche, PVS, Transposition Table, Zugsortierung, Zeitmanagement); die
+\code{MCTSAI} ist eine gleichwertige, aber unabh\"angige Alternative.
+Der \code{TablutServerClient} verbindet eine KI mit dem TU-Gameserver und nutzt
+dabei die server-treuen Regeln aus \code{server\_rules.py}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    font=\footnotesize,
+    box/.style={draw, rounded corners=2pt, align=left, inner sep=4pt,
+                fill=gray!6, minimum height=7mm},
+    core/.style={box, fill=codekw!12, draw=codekw!60},
+    line/.style={-{Latex[length=2mm]}, gray!70},
+    dep/.style={-{Latex[length=2mm]}, dashed, gray!60},
+  ]
+  % Interface + KIs
+  \node[core] (adv) {\textbf{AdvancedAI}\\\code{choose\_move()}};
+  \node[core, right=14mm of adv] (mcts) {\textbf{MCTSAI}\\\code{choose\_move()}};
+  \node[box, above=7mm of $(adv)!0.5!(mcts)$] (iface)
+        {\emph{gemeinsame Schnittstelle} \code{choose\_move(board)}};
+
+  % Suchbausteine unter AdvancedAI
+  \node[box, below=8mm of adv] (id) {\code{iterative\_deepening}};
+  \node[box, below=6mm of id] (pvs) {\code{pvs} / \code{alpha\_beta}};
+  \node[box, left=8mm of pvs] (tt) {\code{TranspositionTable}};
+  \node[box, below=6mm of pvs] (ss) {\code{SearchState}\\\scriptsize Killer + History};
+  \node[box, right=8mm of pvs] (tm) {\code{TimeManager}};
+
+  % MCTS Bausteine
+  \node[box, below=8mm of mcts] (node) {\code{MCTSNode}\\\scriptsize UCT + RAVE};
+
+  % gemeinsame Basis
+  \node[box, below=6mm of ss] (eval) {\code{evaluation}\\\scriptsize 7-Term-Heuristik, Spielphasen};
+  \node[box, left=10mm of eval] (board) {\code{Board}\\\scriptsize Bitboards, Hash};
+  \node[box, right=10mm of eval] (moves) {\code{moves} / \code{rules}};
+
+  % Contest
+  \node[box, right=14mm of mcts] (client) {\textbf{TablutServerClient}};
+  \node[box, below=8mm of client] (srv) {\code{server\_rules}\\\scriptsize server-treue Schlaglogik};
+
+  \draw[line] (iface) -- (adv);
+  \draw[line] (iface) -- (mcts);
+  \draw[line] (adv) -- (id);
+  \draw[line] (id) -- (pvs);
+  \draw[line] (pvs) -- (tt);
+  \draw[line] (pvs) -- (ss);
+  \draw[line] (pvs) -- (tm);
+  \draw[line] (mcts) -- (node);
+  \draw[dep] (pvs) -- (eval);
+  \draw[dep] (node) -- (eval);
+  \draw[dep] (eval) -- (board);
+  \draw[dep] (eval) -- (moves);
+  \draw[dep] (node) to[bend left=10] (moves);
+  \draw[line] (client) -- (adv);
+  \draw[dep] (client) -- (srv);
+  \draw[dep] (srv) -- (board);
+\end{tikzpicture}
+\caption{Zentrale Klassen von DeepKnight. Durchgezogen: \glqq nutzt/steuert\grqq{};
+gestrichelt: \glqq h\"angt ab von\grqq{}. Beide KI-Klassen implementieren dieselbe
+\code{choose\_move}-Schnittstelle und teilen sich \code{Board}, Zuggenerierung und
+Bewertung.}
+\label{fig:classes}
+\end{figure}
+
+% =====================================================================
+\section{Suchverfahren}\label{sec:search}
+% =====================================================================
+Die Suche entwickelte sich \"uber die Meilensteine von einfachem Minimax bis zur
+kombinierten KI \code{AdvancedAI}, die alle Optimierungen vereint (Konfiguration
+[7] in den Benchmarks, Abschnitt~\ref{sec:results}).
+Als Rahmen dient die \emph{iterative Tiefensuche}.
+
+% ---------------------------------------------------------------------
+\subsection{Iterative Tiefensuche (Iterative Deepening)}
+Statt mit fester Tiefe zu suchen, wird die Suche schrittweise vertieft
+(Tiefe $1,2,3,\dots$).
+Die Schleife l\"auft, solange \code{time\_manager.time\_left()} wahr ist; nach
+jeder vollst\"andig abgeschlossenen Tiefe wird das Ergebnis \"ubernommen.
+Vorteile: Es steht jederzeit ein g\"ultiger Zug bereit (gefahrloser Abbruch),
+und die Eintr\"age aus flacheren Tiefen (Transposition Table, Killer/History)
+verbessern die Zugsortierung der n\"achsttieferen Suche.
+Das Verfahren ist damit ideal f\"ur harte Zeitlimits im Turnier.
+
+% ---------------------------------------------------------------------
+\subsection{Minimax und Alpha-Beta (M2)}
+Die Basis-KI aus Meilenstein~2 nutzt Alpha-Beta-Pruning~\cite{russell2021}: Teilb\"aume, die das
+Ergebnis nicht mehr beeinflussen k\"onnen, werden abgeschnitten.
+Da Wei\ss\ als Maximizer und Schwarz als Minimizer behandelt wird (Score stets
+aus Sicht von Wei\ss), gibt es getrennte Max-/Min-Zweige statt eines
+Negamax-Kerns.
+Bereits in M2 wurde eine Basis-Zugsortierung (Schlagz\"uge und K\"onigsz\"uge
+Richtung Ecke zuerst) eingesetzt, da die G\"ute der Sortierung die Zahl der
+Cutoffs bestimmt.
+
+% ---------------------------------------------------------------------
+\subsection{Transposition Table (M3, komplex)}\label{sec:tt}
+W\"ahrend der Suche k\"onnen identische Stellungen \"uber verschiedene Zugfolgen
+erreicht werden (\emph{Transpositionen})~\cite{cpw}.
+Die Transposition Table (\code{src/transposition\_table.py}) speichert bereits
+untersuchte Stellungen, um Mehrfachberechnung zu vermeiden.
+Wie in Abschnitt~\ref{sec:arch} beschrieben, wird das \code{Board}-Objekt direkt
+als Dictionary-Schl\"ussel verwendet -- kein Zobrist-Hashing, keine Kollisionen.
+
+Jeder Eintrag speichert \code{depth}, \code{score}, \code{flag} und
+\code{best\_move}.
+Zur Alpha-Beta-Korrektheit werden drei Knotentypen unterschieden:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Typ} & \textbf{Wert} & \textbf{Bedeutung} \\
+\midrule
+\code{EXACT}       & 0 & exakter Minimax-Wert \\
+\code{LOWER\_BOUND} & 1 & untere Schranke (Beta-Cutoff: Wert $\geq$ score) \\
+\code{UPPER\_BOUND} & 2 & obere Schranke (kein Zug schlug $\alpha$: Wert $\leq$ score) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ein Eintrag wird nur genutzt, wenn seine Tiefe ausreicht
+(\code{entry.depth $\geq$ depth}), und beim Speichern nur \"uberschrieben, wenn
+die neue Suche mindestens so tief war.
+Der gespeicherte \code{best\_move} wird beim n\"achsten Lookup als erster Zug
+probiert und erzeugt so zus\"atzliche Cutoffs.
+
+% ---------------------------------------------------------------------
+\subsection{Principal Variation Search (M3, komplex)}
+PVS (\code{src/pvs.py})~\cite{cpw} erweitert Alpha-Beta: Der erste Zug wird -- dank guter
+Sortierung als wahrscheinlich bester Zug -- mit vollem Fenster $[\alpha,\beta]$
+gesucht, alle weiteren zun\"achst mit einem \emph{Nullfenster}.
+\"Uberschreitet ein Zug das enge Fenster nicht, ist keine weitere Suche n\"otig.
+Nur bei einem \emph{Fail-High} wird mit vollem Fenster nachgesucht (Re-Search).
+Da nicht im Negamax-Schema gearbeitet wird, existieren zwei Varianten:
+\code{\_pvs\_max} f\"ur Wei\ss\ (Nullfenster
+$[\alpha,\min(\beta,\alpha+\texttt{NULL\_WINDOW})]$) und \code{\_pvs\_min} f\"ur
+Schwarz (Nullfenster $[\max(\alpha,\beta-\texttt{NULL\_WINDOW}),\beta]$), mit
+\code{NULL\_WINDOW = 1.0}.
+
+% ---------------------------------------------------------------------
+\subsection{Erweiterte Zugsortierung: Killer Moves + History (M3)}
+Zwei Heuristiken (\code{src/search\_state.py}) verbessern die Sortierung
+weiter~\cite{cpw}.
+\emph{Killer Moves}: Z\"uge, die auf einer Tiefe einen Beta-Cutoff ausgel\"ost
+haben, sind oft auch in anderen Stellungen derselben Tiefe stark; pro Tiefe
+werden zwei solche Z\"uge gespeichert.
+\emph{History-Heuristik}: Eine globale Tabelle vergibt erfolgreichen
+Cutoff-Z\"ugen einen Bonus von $\text{depth}^2$ und dient bei der Sortierung als
+Tiebreaker.
+Die resultierende Reihenfolge (\code{ordered\_for\_search}):
+(1)~TT-\code{best\_move}, (2)~Killer Moves dieser Tiefe, (3)~restliche Z\"uge in
+Basis-Sortierung, darin absteigend nach History-Score.
+Die \"offentliche \code{order\_moves}-Schnittstelle blieb r\"uckw\"artskompatibel.
+
+% ---------------------------------------------------------------------
+\subsection{Spielphasen-Zeitmanagement (M3)}
+Statt jedem Zug dasselbe Budget zuzuweisen, variiert es je nach Spielphase.
+Die Phase bestimmt \code{game\_phase(board)} (\code{src/evaluation.py}) anhand
+der Steinzahl, der K\"onigsposition (Thron/Rand) und der Distanz des K\"onigs zur
+n\"achsten Ecke.
+\code{src/time\_manager.py} skaliert das Basisbudget:
+
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Phase} & \textbf{Zeitfaktor} \\
+\midrule
+Er\"offnung (\code{opening}) & 0.7 \\
+Mittelspiel (\code{midgame}) & 1.3 \\
+Endspiel (\code{endgame})    & 0.9 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Das Mittelspiel ist strategisch am wichtigsten und erh\"alt mehr Zeit;
+Er\"offnung und Endspiel sind oft eindeutiger.
+
+% ---------------------------------------------------------------------
+\subsection{Integration in \code{AdvancedAI}}
+\code{AdvancedAI} (\code{src/ai.py}) vereint alle Techniken.
+Pro Zug bestimmt \code{choose\_move(board)} die Spielphase und das angepasste
+Zeitbudget, setzt Transposition Table und Suchzustand zur\"uck und ruft
+\code{iterative\_deepening} mit \code{pvs\_with\_count} auf.
+Transposition Table und \code{SearchState} bleiben \"uber alle Tiefen einer
+Entscheidung erhalten; die Suche startet mit dem engen Fenster
+$[-\texttt{WIN\_SCORE}, +\texttt{WIN\_SCORE}]$.
+
+% =====================================================================
+\section{Entwicklung der Bewertungsfunktion}\label{sec:eval}
+% =====================================================================
+Die Bewertungsfunktion \code{evaluate(board)} (\code{src/evaluation.py}) liefert
+einen Wert aus Sicht von Wei\ss: positiv~=~gut f\"ur Wei\ss, negativ~=~gut f\"ur
+Schwarz.
+
+\paragraph{Anfangsversion (M1/M2).}
+Zu Beginn wurde ausschlie\ss lich das Material bewertet:
+$\text{Material} = \text{Verteidiger} - \text{Angreifer}$.
+
+\paragraph{Positionelle Merkmale (M2$\rightarrow$M3).}
+Nach und nach kamen positionelle Terme hinzu.
+
+\paragraph{Verbesserungen im Meilenstein~4.}
+F\"ur M4 wurde die schw\"achere Wei\ss-Verteidigung gezielt gest\"arkt: zwei neue
+Terme, \code{corner\_approach\_score} (belohnt freie Schritte des K\"onigs in
+Richtung einer Ecke -- anders als \code{escape\_lane\_score} muss der Weg nicht
+vollst\"andig frei sein, es z\"ahlt der Fortschritt) und
+\code{defender\_shield\_score} (belohnt Verteidiger direkt neben dem K\"onig als
+Schutz-Eskorte).
+Zus\"atzlich wurde \code{king\_distance\_score} auf die \emph{n\"achstgelegene}
+Ecke umgestellt und die Gewichte neu justiert.
+\code{ATTACKER\_VALUE} wurde nach Messung bei $1.0$ belassen, da die
+Materialbewertung stabil war; die neuen Verteidiger-Terme verbessern Wei\ss,
+ohne die Angriffsst\"arke von Schwarz zu besch\"adigen.
+Die finale Funktion ist eine gewichtete Summe von sieben Teilbewertungen:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Teilbewertung} & \textbf{Beschreibung} & \textbf{Gewicht} \\
+\midrule
+\code{material\_score}        & Verteidiger $-$ Angreifer               & 1.0 \\
+\code{king\_distance\_score}   & N\"ahe des K\"onigs zur n\"achsten Ecke & 3.0 \\
+\code{king\_mobility\_score}   & Anzahl freier K\"onigsz\"uge            & 0.3 \\
+\code{escape\_lane\_score}     & freie Fluchtwege zu den Ecken           & 4.5 \\
+\code{king\_danger\_score}     & Angreifer in K\"onigsn\"ahe (negativ)   & 3.0 \\
+\code{corner\_approach\_score} & Fortschritt Richtung Ecke \emph{(M4 neu)} & 1.8 \\
+\code{defender\_shield\_score} & Verteidiger-Eskorte am K\"onig \emph{(M4 neu)} & 0.35 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Contest-getriebene H\"artung (11.\,Juli).}
+In den finalen Contests trat ein reproduzierbarer Schwachpunkt zutage: Als Wei\ss{}
+lief der K\"onig deterministisch in Richtung einer Ecke, die bereits von Angreifern
+bewacht war, und wurde dort geklemmt (K\"onig bei $(2,0)$ geschlagen -- in zwei
+identischen Partien).
+Zwei gezielte Erg\"anzungen beheben das:
+\begin{itemize}
+\item \textbf{Corner-Safety.} Die Anziehung jeder Ecke in \code{king\_distance\_score}
+  und \code{corner\_approach\_score} wird mit der Zahl der Angreifer in Eck-N\"ahe
+  (Manhattan-Distanz~$\le 4$) herunterskaliert. Eine bewachte Ecke zieht den K\"onig
+  nicht mehr wie eine freie an.
+\item \textbf{Klemm-Bedrohung.} \code{king\_danger\_score} bestraft nun zus\"atzlich
+  (\code{KING\_THREAT\_WEIGHT}~$=8.0$) jede Stellung, in der ein Angreifer ein leeres
+  K\"onig-Nachbarfeld in \emph{einem} Zug erreichen kann, w\"ahrend gegen\"uber bereits
+  eine Klemm-Wand (Angreifer oder Eckfeld) steht -- also eine akute, sonst
+  ``diagonal unsichtbare'' Schlagdrohung.
+\end{itemize}
+Nach dem Fix weicht die Suche der Verlustlinie fr\"uh aus (Selfplay: Remis statt
+Wei\ss-Verlust in 17~Z\"ugen), und in den anschlie\ss enden Contests gewann die KI in
+beiden Farbrollen (Abschnitt~\ref{sec:results}).
+
+\paragraph{Terminale Stellungen und tiefenabh\"angiger Sieg.}
+Terminale Stellungen erhalten den Betrag \code{WIN\_SCORE = 10000}.
+Auf einen Hinweis aus der M2-R\"uckmeldung des Betreuers hin wurde der Sieg-Score
+\emph{tiefenabh\"angig} gemacht, damit die KI den \emph{schnellsten} Sieg w\"ahlt
+(\code{terminal\_score}):
+\[
+\text{Wei\ss-Sieg} = \texttt{WIN\_SCORE} - \text{plies\_from\_root},\qquad
+\text{Schwarz-Sieg} = -\texttt{WIN\_SCORE} + \text{plies\_from\_root}.
+\]
+
+\paragraph{Performance-Refactoring.}
+Die Effizienz der Bewertung wurde deutlich gesteigert: \code{king\_mobility\_score}
+z\"ahlt K\"onigsz\"uge nun direkt auf den Bitboards statt \"uber
+\code{generate\_legal\_moves}, und \code{king\_danger\_score} nutzt vorgerechnete
+Nachbarschaftsmasken (\code{\_ADJACENT\_BB}, \code{\_NEAR\_BB}) mit
+\code{bit\_count()}.
+Gemessen auf der Startstellung: rund \textbf{215\,000 Bewertungen/s}
+(vorher ca.\ 3\,000/s, also etwa $72\times$ schneller).
+
+% =====================================================================
+\section{Contest-Anbindung an den TU-Gameserver}\label{sec:contest}
+% =====================================================================
+F\"ur die Turnierteilnahme wurde im vierten Meilenstein ein eigener TCP-Client
+f\"ur den offiziellen TU-Gameserver (gspy / Gameserver25) entwickelt
+(\code{src/gameserver.py}).
+
+\paragraph{Protokoll.}
+Die Kommunikation ist zeilenbasiert \"uber TCP.
+Der Client beherrscht Handshake und Login (\code{gspy}, \code{register},
+\code{login}), das Erstellen bzw.\ Beitreten einer Lobby, die Konfigurationsphase
+sowie die eigentliche Spielschleife.
+Der Server \"ubertr\"agt nicht das komplette Brett, sondern nur die einzelnen
+Z\"uge (Format \code{r,c,r,c}, 0-indiziert -- identisch zu unserem internen
+Zug-Tupel).
+Der Client pflegt daher ein eigenes \code{Board} und wendet jeden Zug -- eigenen
+wie gegnerischen -- lokal an.
+
+\paragraph{Server-treue Schlagregeln.}
+Der Gameserver verwendet am Thron abweichende Schlagregeln.
+Damit das lokal gepflegte Brett stets exakt dem Server-Brett entspricht (jede
+Abweichung f\"uhrt zu einem illegalen Zug und damit zur Niederlage), wurde die
+Server-Schlaglogik in \code{src/server\_rules.py} 1:1 nachgebildet
+(\code{server\_captures}, \code{apply\_move\_server\_faithful}), inklusive der
+Sonderf\"alle ``leerer Thron als Klemm-Wand'', ``Thron schl\"agt Schwarz immer''
+und ``Eckfeld als Klemm-Wand''.
+Diese Logik wird ausschlie\ss lich vom Client benutzt, nicht von der Suche.
+\textbf{Verifikation:} \"uber $1\,000$ Zufallspartien
+($152\,000$ Z\"uge) stimmten unser Brett und der echte Servercode zu
+$100\,\%$ \"uberein -- \textbf{0 Desyncs, 0 illegale Z\"uge}.
+
+\paragraph{Dynamisches, phasenabh\"angiges Zeitbudget.}
+Der Client verwaltet das vom Server gemeldete Restzeit-Konto und bemisst das
+Denkbudget pro Zug (\code{\_budget\_for\_move}) aus drei Faktoren: einem neutralen
+Budget $\min(\text{base},\ \text{Restkonto}/20)$, das mit der Restzeit skaliert,
+einem Spielphasen-Faktor (Er\"offnung $0{,}6$, Mittelspiel $1{,}5$, Endspiel $1{,}2$)
+und harten Deckeln (nie unter $0{,}2$\,s, nie \"uber $1/6$ des Kontos bzw.\ das
+Dreifache der Basis).
+So denkt die KI im entscheidenden Mittelspiel am l\"angsten und verk\"urzt in der
+Er\"offnung; da das Budget mit dem Restkonto schrumpft, verliert sie nie durch
+Zeit\"uberschreitung.
+
+\paragraph{Planbare Farbzuteilung.}
+Der Gameserver ordnet die Farben \"uber den Lobby-Scheduler zu; der Default
+\code{random} w\"urfelt sie pro Partie aus.
+Damit die Seiten f\"ur die Auswertung planbar sind, setzt der Host-Client
+\code{scheduler = round\_robin}: der Lobby-Ersteller wird Spieler~0 (Schwarz,
+Angreifer), der Beitretende Spieler~1 (Wei\ss, Verteidiger).
+
+\paragraph{Wiederholungs-Vermeidung.}
+Da der Server kein automatisches Remis kennt, w\"urde stures Wiederholen einer
+Stellung ins Leere laufen.
+Der Client erkennt Stellungswiederholungen (\code{\_record\_position}) und weicht
+nur dann auf einen alternativen Zug aus, wenn wir vorne liegen
+(\code{\_repetition\_alternative}); andernfalls wird die Wiederholung
+akzeptiert, statt einen erzwungenen Verlustzug zu spielen.
+
+\paragraph{Live-Beobachtung.}
+\code{watch\_board.py} zeigt die laufende Partie live an, inklusive
+Gewonnen-/Verloren-/Unentschieden-Anzeige.
+
+% =====================================================================
+\section{Komplement\"are Technik: Monte-Carlo-Baumsuche}\label{sec:mcts}
+% =====================================================================
+Als komplement\"are Technik zum deterministischen Alpha-Beta-Stack wurde die
+\textbf{Monte-Carlo-Baumsuche (MCTS)} mit dem UCT-Kriterium~\cite{russell2021}
+umgesetzt (\"Uberblick in~\cite{browne2012}).
+MCTS baut den Suchbaum stochastisch auf und ben\"otigt keine Trainingspipeline,
+was gut zur symbolischen Ausrichtung des Projekts passt.
+Jede Iteration durchl\"auft vier Phasen:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{Selection:} Vom Wurzelknoten wird nach der UCB1-Formel
+        $\bar{x}_i + c\,\sqrt{\ln N / n_i}$ der vielversprechendste Ast
+        abgestiegen.
+  \item \textbf{Expansion:} Am Blatt wird ein neuer Kindknoten (Zug) angeh\"angt.
+  \item \textbf{Simulation:} Von dort wird mit Zufallsz\"ugen bis zum Spielende
+        ausgespielt (Rollout).
+  \item \textbf{Backpropagation:} Das Ergebnis wird entlang des Pfades
+        zur\"uckgez\"ahlt.
+\end{enumerate}
+
+Die Umsetzung nutzt die bestehende Zuggenerierung und Endregeln
+(\code{apply\_move}, \code{is\_game\_over}) und ist -- wie der \"ubrige Code --
+single-threaded.
+Die MCTS-KI wird als \code{MCTSAI} mit derselben \code{choose\_move}-Schnittstelle
+wie \code{AdvancedAI} bereitgestellt, sodass beide direkt gegeneinander antreten
+k\"onnen.
+
+\paragraph{Erweiterung: RAVE (Rapid Action Value Estimation)~\cite{browne2012}.}
+Reines UCT hat unter knappem Zeitbudget ein Stichprobenproblem: Jeder Zug
+sammelt nur \emph{eigene} Besuche, und bei einigen hundert Iterationen pro Zug
+-- mehr sind in Python nicht drin -- bleibt die Statistik der meisten Z\"uge
+praktisch leer.
+\textbf{RAVE} begegnet dem mit der \emph{All-Moves-As-First}-Annahme (AMAF):
+War ein Zug \emph{irgendwo sp\"ater} in einer Simulation gut, ist er
+vermutlich auch \emph{jetzt} gut.
+Jeder Knoten f\"uhrt daher neben den echten Besuchen eine zweite,
+seitengetrennte AMAF-Statistik.
+Der Rollout gibt seine gespielte Zugfolge zur\"uck; die Backpropagation
+schreibt das Simulationsergebnis jedem Kindknoten gut, dessen Zug in dieser
+Folge noch vorkommt -- auch wenn er nie ausgew\"ahlt wurde.
+So entstehen pro Iteration statt eines einzigen Datenpunkts Dutzende.
+
+Beide Sch\"atzer werden in der Selektion gemischt.
+Der RAVE-Wert ist breit, aber ungenau; der UCT-Wert ist exakt, aber langsam.
+Das Gewicht
+\[
+  \beta = \sqrt{\frac{k}{3n + k}}, \qquad k = 300,
+\]
+sorgt f\"ur den \"Ubergang: Bei $n = 0$ echten Besuchen dominiert RAVE, mit
+wachsendem $n$ f\"allt $\beta$ gegen null und die exakte UCT-Statistik
+\"ubernimmt.
+\"Uber den Schalter \code{use\_rave} l\"asst sich die Erweiterung f\"ur
+A/B-Messungen abschalten.
+
+\paragraph{Spielst\"arke-Messung (Selfplay).}
+Ein leichtgewichtiger, deterministischer Selfplay-Helfer
+(\code{python -m src.m4\_selfplay}) l\"asst \code{MCTSAI} und \code{AdvancedAI}
+in beiden Farbrollen gegeneinander antreten
+(Seed~7, $0{,}2$\,s pro Zug, \code{AdvancedAI} bis Tiefe~2, MCTS mit
+$120$~Iterationen).
+Ergebnis: In beiden Partien gewann die \emph{schwarze} (Angreifer-)Seite --
+\code{AdvancedAI} als Schwarz in 55~Z\"ugen, \code{MCTSAI} als Schwarz in
+37~Z\"ugen, also \textbf{1:1}.
+Das best\"atigt einerseits den strukturellen Vorteil der Angreifer im Tablut und
+zeigt andererseits, dass MCTS unter diesem knappen Budget durchaus
+konkurrenzf\"ahig ist.
+Der ausgereifte Alpha-Beta-Stack bleibt jedoch die contest-erprobte Haupt-KI;
+MCTS dient als komplement\"are Technik und Vergleichsbasis.
+
+\paragraph{Wirkung von RAVE -- ein negativer Befund.}
+Um den Nutzen von RAVE zu belegen statt ihn nur zu behaupten, traten beide
+Varianten bei identischem Iterationsbudget (200~Iterationen pro Zug) direkt
+gegeneinander an, mit wechselnden Farbrollen.
+Das Ergebnis liegt mit 7:5 aus Sicht der RAVE-Variante im Rauschen: Bei dieser
+Stichprobengr\"o\ss e w\"are ein solcher Ausgang auch zwischen zwei identischen
+Gegnern unauff\"allig.
+Eine zweite Messung \"uber 30~zuf\"allig angespielte Stellungen mit 150 bzw.\
+400~Iterationen zeigte ebenfalls keinen belastbaren Unterschied.
+Wir k\"onnen f\"ur RAVE in unserem Aufbau also \emph{keine} Verbesserung der
+Spielst\"arke nachweisen.
+
+Daf\"ur gibt es zwei plausible Gr\"unde.
+Erstens ist unser Iterationsbudget zu klein: RAVE stammt aus Go-Programmen mit
+vielen tausend Playouts pro Zug, w\"ahrend unsere Python-Implementierung im
+Contest-Zeitrahmen nur einige hundert schafft -- der Baum bleibt so flach, dass
+sich der Informationsvorsprung der AMAF-Statistik kaum auszahlen kann.
+Zweitens verletzt Tablut die AMAF-Grundannahme st\"arker als Go: Ob ein Zug gut
+ist, h\"angt hier massiv von der K\"onigsstellung ab, sodass derselbe Zug je nach
+Zeitpunkt hervorragend oder verlustbringend sein kann.
+Wir dokumentieren dies bewusst als Ergebnis: Eine gemessene Nullaussage ist
+aussagekr\"aftiger als eine unbelegte Verbesserung, und die Implementierung
+bleibt \"uber \code{use\_rave} f\"ur sp\"atere Messungen mit gr\"o\ss erem
+Budget erhalten.
+
+% =====================================================================
+\section{Benchmarks, Contests und Softwarequalit\"at}\label{sec:results}
+% =====================================================================
+
+\subsection{Suchbenchmarks}
+Die Benchmarks wurden mit \code{python -m src.m3\_experiments} bei $1.0$\,s
+Zeitlimit pro Konfiguration durchgef\"uhrt (Apple~M1~Pro, macOS, Python~3.13.2).
+Verglichen werden sieben Konfigurationen von reinem Alpha-Beta bis zu
+\code{AdvancedAI}.
+Alle liefern denselben besten Zug und Score -- die Optimierungen \"andern nur die
+Effizienz, nicht das Ergebnis.
+Tabelle~\ref{tab:nodes} zeigt f\"ur drei repr\"asentative Stellungen die erreichte
+Tiefe~(T) und die untersuchten Knoten~(K).
+
+\begin{center}
+\captionof{table}{Erreichte Tiefe (T) und untersuchte Knoten (K) bei 1\,s}\label{tab:nodes}
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{>{\raggedright}p{5.3cm}cccccc}
+\toprule
+ & \multicolumn{2}{c}{\textbf{Start}} & \multicolumn{2}{c}{\textbf{Wei\ss\ in 2}} & \multicolumn{2}{c}{\textbf{Endspiel}} \\
+\textbf{Konfiguration} & T & K & T & K & T & K \\
+\midrule
+{[1]} Alpha-Beta (M2-Baseline)     & 3 & 5781 & 5 & 3710 & 5 & 2836 \\
+{[2]} AB + TT                      & 3 & 8642 & 6 & 2360 & 6 & 2463 \\
+{[3]} AB + Killer + History       & 3 & 7093 & 5 & 3383 & 7 & 2943 \\
+{[4]} PVS                         & 3 & 5857 & 5 & 3827 & 5 & 2836 \\
+{[5]} PVS + TT                    & 3 & 6369 & 6 & 2353 & 6 & 2412 \\
+{[6]} PVS + TT + Killer + History & 3 & 7498 & 6 & \textbf{2005} & 6 & \textbf{2073} \\
+{[7]} AdvancedAI                   & 3 & 7498 & \textbf{6} & \textbf{2005} & \textbf{6} & \textbf{2073} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Der Gewinn zeigt sich zweifach: gr\"o\ss ere erreichte Tiefe im gleichen Budget
+und weniger Knoten bei gleicher Tiefe.
+In ``Wei\ss\ gewinnt in 2'' und im Endspiel erreicht \code{AdvancedAI} bei $1$\,s
+Tiefe~6, w\"ahrend reines Alpha-Beta nur Tiefe~5 schafft.
+Die Transposition Table wirkt am st\"arksten in transpositionsreichen
+Endspielstellungen, die erweiterte Zugsortierung vor allem im Mittelspiel.
+
+\subsection{Contests}
+Die Spielst\"arke wurde in echten Contests gegen eine andere Kursgruppe gemessen;
+die Verbindung lief \"uber einen \code{bore}- bzw.\ \code{ngrok}-TCP-Tunnel, mit
+$5$\,s Basis-Bedenkzeit pro Zug und $120$\,s Zeitkonto pro Spieler.
+Aus fr\"uheren Contests wurden zwei Ursachen behoben: ein zu knapp gesetztes
+\code{time\_account} (Gegner-Flag/-Crash) und Endlos-Wiederholungen
+(Abschnitt~\ref{sec:contest}).
+Die finalen Partien am 11.\,Juli deckten zudem die K\"onig-Falle auf
+(Abschnitt~\ref{sec:eval}): Als Wei\ss{} verlor die KI zun\"achst, weil der K\"onig in
+eine bewachte Ecke lief.
+Nach der Corner-Safety-/Klemm-Bedrohungs-H\"artung gewann sie die Folgepartien in
+\emph{beiden} Farbrollen.
+
+\begin{center}
+\begin{minipage}{\linewidth}
+\centering
+\captionof{table}{Finale Contests gegen eine andere Kursgruppe (11.\,Juli 2026)}
+\begin{tabular}{ll>{\raggedright\arraybackslash}p{5.6cm}}
+\toprule
+\textbf{Partie} & \textbf{Farbe} & \textbf{Ergebnis} \\
+\midrule
+vor Eval-H\"artung  & Wei\ss   & Niederlage -- K\"onig bei $(2,0)$ geklemmt ($17$~Halbz\"uge) \\
+nach Eval-H\"artung & Wei\ss   & Sieg -- K\"onig-Flucht in die Ecke ($18$--$22$~Halbz\"uge) \\
+nach Eval-H\"artung & Schwarz  & Sieg -- K\"onig gefangen ($41$~Halbz\"uge) \\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\end{center}
+
+\subsection{Softwarequalit\"at und Tests}
+Die Korrektheit ist durch eine umfangreiche Testsuite abgesichert:
+\textbf{138 Tests}, alle gr\"un in der finalen Projektfassung.
+Getestet werden u.\,a.\ PVS, Transposition Table, Zugsortierung/Suchzustand,
+Zeitmanagement, die tiefenabh\"angigen Sieg-Scores, die kombinierte KI sowie die
+MCTS-Suche (\code{test\_mcts.py}, \code{test\_m4\_selfplay.py}).
+Insbesondere wird gepr\"uft, dass PVS bei gleicher Tiefe dasselbe Ergebnis
+liefert wie Alpha-Beta.
+Der gesamte Code liegt versioniert im Repository
+\href{https://github.com/BatuCani/deepknight}{github.com/BatuCani/deepknight}.
+
+% =====================================================================
+\section{Entwicklung und Erkenntnisse}\label{sec:process}
+% =====================================================================
+Die Funktionalit\"at wurde inkrementell aufgebaut: Grundger\"ust,
+Basissuche, erweiterte Suchverfahren sowie Optimierung und Serveranbindung.
+
+\paragraph{Werkzeuge.}
+Der Quellcode wird mit \textbf{Git} versioniert.
+Als Sprache dient \textbf{Python~3} ausschlie\ss lich mit der Standardbibliothek;
+einzige externe Abh\"angigkeit ist \textbf{pytest} f\"ur die Tests.
+Der Bericht ist in \LaTeX{} gesetzt.
+
+\paragraph{Qualit\"atssicherung.}
+Zentrale Ma\ss nahme ist eine wachsende \textbf{Testsuite},
+die Regressionen in Zuggenerierung, Regeln und Suchverfahren sichtbar macht.
+Kritische Invarianten sind explizit abgesichert -- etwa dass PVS bei gleicher
+Tiefe dasselbe Ergebnis liefert wie reines Alpha-Beta, oder dass die
+server-treue Schlaglogik \"uber $152\,000$ Z\"uge nicht vom echten Servercode
+abweicht (0~Desyncs).
+So wurden Korrektheit und Turnierfestigkeit messbar statt nur behauptet.
+
+\paragraph{Reflexion.}
+R\"uckblickend war die gr\"o\ss te Lehre, dass reale Contests Schwachstellen
+aufdecken, die weder Tests noch Selfplay zeigten: Erst eine reproduzierbare
+Niederlage als Wei\ss{} f\"uhrte zur \glqq K\"onig-Falle\grqq{}-H\"artung
+(Abschnitt~\ref{sec:eval}).
+Ebenso zahlte sich der fr\"uhe Umstieg auf Bitboards aus -- der Geschwindigkeits\-gewinn
+(rund $72\times$) erm\"oglichte tiefere Suchen im selben Zeitbudget.
+Nicht jede Erweiterung brachte messbaren Gewinn: F\"ur RAVE lie\ss{} sich in
+unserem Aufbau keine St\"arkeverbesserung nachweisen -- ein bewusst dokumentierter
+negativer Befund (Abschnitt~\ref{sec:mcts}).
+
+% =====================================================================
+\section{Fazit und Ausblick}\label{sec:conclusion}
+% =====================================================================
+\"Uber vier Meilensteine ist mit \code{DeepKnight} ein vollst\"andiger,
+turnierf\"ahiger Alpha-Beta-Stack entstanden: Bitboard-Repr\"asentation,
+Transposition Table, Principal Variation Search, erweiterte Zugsortierung und
+Spielphasen-Zeitmanagement, kombiniert mit einer positionell reichen
+Bewertungsfunktion.
+Im vierten Meilenstein kamen die Contest-Anbindung an den TU-Gameserver mit
+server-treuer Schlaglogik (verifiziert \"uber $152\,000$ Z\"uge), eine gest\"arkte
+Wei\ss-Verteidigung sowie die komplement\"are Monte-Carlo-Baumsuche hinzu.
+Die finale Projektfassung ist durch 138~Tests abgesichert.
+
+\paragraph{Ausblick.}
+Weiteres Potenzial liegt in der Feinjustierung der Bewertungsgewichte (etwa per
+evolution\"arem Lernen), einer Ruhesuche zur Vermeidung des Horizont-Effekts
+sowie einer engeren Verzahnung von MCTS und Alpha-Beta (z.\,B.\ MCTS mit
+Alpha-Beta-Rollouts statt reiner Zufallsz\"uge).
+
+% =====================================================================
+\begin{thebibliography}{9}
+% =====================================================================
+\bibitem{russell2021}
+S.~Russell und P.~Norvig.
+\emph{Artificial Intelligence: A Modern Approach.}
+4.~Auflage, Pearson, 2021.
+(Grundlagen der Spielbaumsuche: Minimax, Alpha-Beta, Monte-Carlo-Baumsuche/UCT.)
+
+\bibitem{cpw}
+\emph{Chessprogramming Wiki.}
+\url{https://www.chessprogramming.org}, abgerufen im Juli 2026.
+(Referenz f\"ur die praktischen Such-Erweiterungen: Transposition Table,
+Principal Variation Search, Killer Moves, History-Heuristik.)
+
+\bibitem{browne2012}
+C.~Browne u.\,a.
+\emph{A Survey of Monte Carlo Tree Search Methods.}
+IEEE Transactions on Computational Intelligence and AI in Games,
+4(1):1--43, 2012.
+(\"Ubersicht zu MCTS-Varianten einschlie\ss lich AMAF/RAVE.)
+\end{thebibliography}
+
+\end{document}

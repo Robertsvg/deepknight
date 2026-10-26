@@ -1,0 +1,41 @@
+{
+  "python": "3.13.0",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "configuration": {
+    "games_per_color": 1,
+    "opponent": "uct",
+    "time": 0.2,
+    "iterations": 200,
+    "rollout_depth": 8,
+    "depth": 2,
+    "seed": 7,
+    "max_moves": 12,
+    "fixed_iterations": true
+  },
+  "candidate": "MCTS+RAVE",
+  "outcomes": {
+    "wins": 0,
+    "losses": 0,
+    "draws": 2
+  },
+  "games": [
+    {
+      "white_ai": "MCTSAI",
+      "black_ai": "MCTSAI",
+      "result": "draw",
+      "moves": 12,
+      "candidate_color": "white",
+      "seed": 7,
+      "elapsed_s": 20.759118699934334
+    },
+    {
+      "white_ai": "MCTSAI",
+      "black_ai": "MCTSAI",
+      "result": "draw",
+      "moves": 12,
+      "candidate_color": "black",
+      "seed": 7,
+      "elapsed_s": 29.67911390005611
+    }
+  ]
+}

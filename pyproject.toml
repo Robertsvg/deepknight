@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepknight-tablut"
+version = "1.0.0"
+description = "A bitboard-based Tablut engine with PVS, transposition tables, and MCTS/RAVE"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.17,<1"]
+
+[project.urls]
+Repository = "https://github.com/Robertsvg/deepknight"
+Upstream = "https://github.com/BatuCani/deepknight"
+
+[project.scripts]
+deepknight = "src.play:main"
+deepknight-gui = "src.gui:main"
+deepknight-selfplay = "src.m4_selfplay:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
